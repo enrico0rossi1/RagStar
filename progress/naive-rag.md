@@ -88,7 +88,7 @@ Apply in this order:
 4. **Deduplication** — exact-match dedup before chunking; avoids duplicate chunks in the index
 
 ### Decision
-- **Which formats to support first:** TBD
+- **Which formats to support first:** `.txt`, `.pdf`, `.md` (2026-08-18)
 - **Strip markdown syntax or keep it:** TBD (keeping it is fine; embeddings handle it)
 
 ---
@@ -214,7 +214,7 @@ vector = model.encode("your text")
 **The embedding model used at index time must be the same model used at query time.** Mixing models breaks the vector space — retrieval will return garbage. Pick one and commit.
 
 ### Decision
-- **Embedding model:** TBD (recommended: `nomic-embed-text` if using Ollama exclusively; `BGE-small-en-v1.5` if you want sentence-transformers)
+- **Embedding model:** `nomic-embed-text` (2026-08-18, via Ollama, same openai client as chat — see [src/embedder/embedder.py](../src/embedder/embedder.py))
 
 ---
 
@@ -445,7 +445,7 @@ answer = response.choices[0].message.content
 ```
 
 ### Decision
-- **Chat model:** TBD
+- **Chat model:** `qwen2.5:7b` (2026-08-18, native Windows Ollama)
 - **Temperature:** TBD (recommended: 0.0)
 - **Max response tokens:** TBD (recommended: 512)
 
@@ -604,17 +604,17 @@ Runs all Q&A pairs, prints RAGAS scores, saves results to `eval/results_TIMESTAM
 
 | Component | Decision | Status |
 |-----------|----------|--------|
-| Document formats to support | | TBD |
+| Document formats to support | .txt, .pdf, .md | Done |
 | Chunking strategy | | TBD |
 | Chunk size (tokens) | | TBD |
 | Chunk overlap (tokens) | | TBD |
-| Embedding model | | TBD |
+| Embedding model | nomic-embed-text | Done |
 | Vector store | | TBD |
 | Similarity metric | | TBD |
 | Top-K | | TBD |
 | System prompt style | | TBD |
 | Context ordering | | TBD |
-| Chat model | | TBD |
+| Chat model | qwen2.5:7b | Done |
 | Temperature | | TBD |
 | Max response tokens | | TBD |
 | Eval framework | | TBD |

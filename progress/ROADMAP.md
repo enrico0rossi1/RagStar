@@ -43,7 +43,7 @@ Pull any of these — pick one that fits your VRAM:
 | `qwen2.5:7b` | ~5 GB | Strong on retrieval-style tasks |
 | `phi3:mini` | ~2 GB | CPU-friendly |
 
-**Chosen model:** TBD
+**Chosen model:** `qwen2.5:7b` (2026-08-18, native Windows Ollama)
 
 ### 0.3 Embedding model (separate from chat LLM — always)
 DwarfStar has no embeddings endpoint; this service stays separate even after migration.
@@ -55,7 +55,7 @@ DwarfStar has no embeddings endpoint; this service stays separate even after mig
 | `all-MiniLM-L6-v2` | `pip install sentence-transformers` | 384 | Tiny, fast, no Ollama needed |
 | `BGE-small-en` | `pip install sentence-transformers` | 384 | Good English retrieval |
 
-**Chosen embedding model:** TBD
+**Chosen embedding model:** `nomic-embed-text` (2026-08-18, via Ollama, verified in [src/embedder/embedder.py](../src/embedder/embedder.py))
 
 ### 0.4 Verification gate
 Before Phase 1: one script that calls chat + embeddings and prints both outputs. No moving forward until this is green.
@@ -143,8 +143,9 @@ Fill this in as you make each choice:
 
 | Phase | Decision | Chosen | Date |
 |-------|----------|--------|------|
-| 0.2 | Chat model | — | |
-| 0.3 | Embedding model | — | |
+| 0.2 | Chat model | qwen2.5:7b | 2026-08-18 |
+| 0.3 | Embedding model | nomic-embed-text | 2026-08-18 |
+| 1.1 | Document formats | .txt, .pdf, .md | 2026-08-18 |
 | 1.1 | Chunking strategy | — | |
 | 1.1 | Chunk size / overlap | — | |
 | 1.2 | Vector store | — | |
