@@ -122,6 +122,17 @@ Build this in parallel with Phase 1. Don't skip it — without numbers you can't
 
 **Chosen eval framework:** TBD
 
+### 6a Performance metrics (speed, not quality)
+
+Quality metrics above answer "are the answers good?" — they say nothing about "is it fast enough to use?". Track both, same eval run:
+
+| Metric | How |
+|--------|-----|
+| End-to-end latency per query | `time.perf_counter()` around retrieval+generation in `eval.py` |
+| Generation speed (tokens/sec) | `completion_tokens / generation_time` from the chat response |
+
+Matters for comparing Ollama vs. `ds4-server` later (Phase 7), and for judging whether an Advanced RAG technique's quality gain is worth its added latency.
+
 ---
 
 ## Phase 7 — DwarfStar Integration (Deferred)

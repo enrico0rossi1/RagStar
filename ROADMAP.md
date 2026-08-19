@@ -368,6 +368,17 @@ Build this in parallel with Phase 1. Don't skip it — without numbers you can't
 | Context relevance | Are retrieved chunks actually relevant to the query? |
 | Answer relevance | Does the answer address the question asked? |
 
+### 6.3a Performance metrics (speed, not quality)
+
+Everything above measures whether answers are *good*. Nothing above measures whether the pipeline is *fast enough to use*. Track these alongside RAGAS scores, not instead of them:
+
+| Metric | What it measures | How |
+|--------|------------------|-----|
+| End-to-end latency | Wall-clock time per query (retrieval + generation) | `time.perf_counter()` around the query function in `eval.py` |
+| Generation speed (tokens/sec) | Decode speed of the chat model | `response.usage.completion_tokens / generation_time` |
+
+Record avg/p50/p95 across the eval Q&A set, same run as the quality scores — one number without the other is misleading (a fast pipeline with bad answers, or an accurate one too slow to use, are both failures). Relevant later for comparing Ollama vs. `ds4-server` (Phase 7) and for judging whether Advanced RAG techniques (reranking, multi-query) are worth their added latency.
+
 ### 6.3 Robustness tests (mandatory before calling any phase "done")
 
 | Test | What you're checking |

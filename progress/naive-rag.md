@@ -89,6 +89,7 @@ Apply in this order:
 
 ### Decision
 - **Which formats to support first:** `.txt`, `.pdf`, `.md` (2026-08-18)
+- **PDF library:** `pdfplumber` (2026-08-19) — better multi-column/table layout handling than `pypdf`
 - **Strip markdown syntax or keep it:** TBD (keeping it is fine; embeddings handle it)
 
 ---
@@ -166,9 +167,9 @@ Embed each sentence; split when cosine similarity between adjacent sentences dro
 **Defer to Advanced RAG** — too expensive to tune at the naive stage.
 
 ### Decision
-- **Chunking strategy:** TBD (recommended: recursive character split)
-- **Chunk size (tokens):** TBD (recommended: 512)
-- **Overlap:** TBD (recommended: 50 tokens / ~10%)
+- **Chunking strategy:** Recursive character split (2026-08-19) — hand-rolled, no framework. See [src/chunker/chunker.py](../src/chunker/chunker.py). Interface `chunk_document(doc) -> list[Chunk]` kept stable so the implementation can be swapped later without touching the rest of the pipeline.
+- **Chunk size:** 2000 chars ≈ 512 tokens (2026-08-19) — character-based approximation (~4 chars/token), no tokenizer wired up yet
+- **Overlap:** 200 chars ≈ 50 tokens / 10% (2026-08-19)
 
 ---
 
@@ -278,7 +279,7 @@ pip install faiss-cpu
 - No metadata storage — you'd need a separate store for the text and source
 
 ### Decision
-- **Vector store:** TBD (recommended: LanceDB for simplicity, Chroma for ecosystem resources)
+- **Vector store:** LanceDB (2026-08-19) — embedded, no server, per ADR-0001's local-first recommendation. Table `chunks` in `vector_db/`, rebuilt from scratch on every `ingest.py` run (not incremental — fine at this corpus size). See [src/ingest.py](../src/ingest.py).
 
 ---
 
@@ -313,8 +314,8 @@ Only return chunks above a minimum similarity score. Prevents returning irreleva
 **Tradeoff:** harder to tune than K; different embedding models have different score ranges. Easier to start with fixed K.
 
 ### Decision
-- **Similarity metric:** TBD (recommended: cosine)
-- **Top-K:** TBD (recommended: 5)
+- **Similarity metric:** Cosine, set explicitly (2026-08-19) — `table.search(q).metric("cosine")`. LanceDB's default is squared-L2, not cosine; confirmed `nomic-embed-text` vectors are unit-normalized (norm ≈ 1.0) so L2 and cosine happen to rank identically today (L2² = 2 × cosine_distance), but relying on that silently would break if the embedding model ever changes. Set explicitly so distance values are also directly interpretable (0 = identical, 2 = opposite).
+- **Top-K:** 5 (2026-08-19)
 - **Threshold-based?** TBD (recommended: no, for now)
 
 ---
@@ -510,6 +511,17 @@ Manual test framework from the survey paper. Not a library — you construct the
 | **Information integration** | Create questions that require combining facts from 2+ chunks |
 | **Counterfactual robustness** | Add a document with a deliberate factual error; check if model repeats it |
 
+### Step 3a: Performance metrics (speed, not quality)
+
+RAGAS/RGB tell you if answers are *good*; they say nothing about whether the pipeline is *fast enough to use*. Track both from the same eval run, in `eval.py`:
+
+| Metric | How to measure |
+|--------|----------------|
+| End-to-end latency per query | `time.perf_counter()` around retrieval + generation |
+| Generation speed (tokens/sec) | `response.usage.completion_tokens / generation_time` |
+
+Record avg/p50/p95 across the Q&A set. A pipeline that's accurate but too slow to use, or fast but wrong, are both failures — report them together. This becomes the baseline you compare against when switching Ollama → `ds4-server` (Phase 7), and when deciding if an Advanced RAG technique's quality gain (e.g. reranking) is worth its added latency.
+
 ### Retrieval-only metrics (if you have ground_truth_chunks)
 
 | Metric | What it measures |
@@ -557,8 +569,9 @@ RagStar/
 │   ├── query.py            ← query → embed → search → prompt → generate
 │   └── eval.py             ← run labeled Q&A set → score with RAGAS
 │
-├── data/
-│   └── documents/          ← your source documents go here
+├── data/                    ← gitignored (not committed)
+│   ├── knowledge/          ← the actual RAG corpus; only this gets loaded/indexed
+│   └── other/              ← anything else (scratch downloads, notes) — never read by the loader
 │
 ├── vector_db/              ← LanceDB or Chroma persisted index (gitignore this)
 │
@@ -605,13 +618,13 @@ Runs all Q&A pairs, prints RAGAS scores, saves results to `eval/results_TIMESTAM
 | Component | Decision | Status |
 |-----------|----------|--------|
 | Document formats to support | .txt, .pdf, .md | Done |
-| Chunking strategy | | TBD |
-| Chunk size (tokens) | | TBD |
-| Chunk overlap (tokens) | | TBD |
+| Chunking strategy | Recursive character split | Done |
+| Chunk size (tokens) | 2000 chars (~512 tok) | Done |
+| Chunk overlap (tokens) | 200 chars (~50 tok) | Done |
 | Embedding model | nomic-embed-text | Done |
-| Vector store | | TBD |
-| Similarity metric | | TBD |
-| Top-K | | TBD |
+| Vector store | LanceDB | Done |
+| Similarity metric | Cosine, explicit | Done |
+| Top-K | 5 | Done |
 | System prompt style | | TBD |
 | Context ordering | | TBD |
 | Chat model | qwen2.5:7b | Done |
