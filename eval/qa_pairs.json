@@ -1,0 +1,117 @@
+[
+  {
+    "question": "How many total and active parameters does DeepSeek-V4-Flash have?",
+    "ground_truth": "284B total parameters, 13B active parameters.",
+    "expect_answerable": true
+  },
+  {
+    "question": "What is DeepSeek-V4-Pro's context length?",
+    "ground_truth": "1M tokens.",
+    "expect_answerable": true
+  },
+  {
+    "question": "How many transformer layers does DS4 validate for DeepSeek-V4, and how wide is the raw sliding-window attention?",
+    "ground_truth": "43 layers; a raw sliding-window of 128 tokens.",
+    "expect_answerable": true
+  },
+  {
+    "question": "What license are the DeepSeek-V4 model weights released under?",
+    "ground_truth": "MIT License.",
+    "expect_answerable": true
+  },
+  {
+    "question": "What sampling settings does the DeepSeek-V4 model card recommend for local deployment, and how does DS4's default differ?",
+    "ground_truth": "The model card recommends temperature=1.0, top_p=1.0. DS4 keeps top_p=1.0 but adds a local min_p=0.05 default to avoid sampling tokens far below the best token's probability.",
+    "expect_answerable": true
+  },
+  {
+    "question": "According to the DS4 agent notes, is C++ allowed in the codebase?",
+    "ground_truth": "No — the agent notes explicitly say not to introduce C++.",
+    "expect_answerable": true
+  },
+  {
+    "question": "Per the DS4 agent notes, what should you do before running a distributed inference test that could be affected by a change?",
+    "ground_truth": "Ask the user before doing so.",
+    "expect_answerable": true
+  },
+  {
+    "question": "What does ds4_metal.m implement?",
+    "ground_truth": "The Objective-C Metal runtime and kernel wrappers.",
+    "expect_answerable": true
+  },
+  {
+    "question": "How much RAM and which GPU does the Strix Halo machine in the DS4 setup guide have?",
+    "ground_truth": "128 GB RAM and a Radeon 8060S (gfx1151).",
+    "expect_answerable": true
+  },
+  {
+    "question": "What GGUF quantization should be avoided on the Strix Halo ROCm setup, and why?",
+    "ground_truth": "Mixed IQ2/IQ4 or IQ2/Q4 GGUFs should be avoided — they put much more memory pressure on the ROCm path and can trigger a system OOM instead of a clean DS4 failure.",
+    "expect_answerable": true
+  },
+  {
+    "question": "What kernel parameters does the Strix Halo guide set to increase GPU-visible memory?",
+    "ground_truth": "amd_iommu=off amdgpu.gttsize=126976 ttm.pages_limit=32505856 ttm.page_pool_size=32505856",
+    "expect_answerable": true
+  },
+  {
+    "question": "What license is DwarfStar (ds4) itself released under?",
+    "ground_truth": "MIT License.",
+    "expect_answerable": true
+  },
+  {
+    "question": "Does the DwarfStar MIT license provide any warranty?",
+    "ground_truth": "No — the software is provided \"AS IS\", without warranty of any kind.",
+    "expect_answerable": true
+  },
+  {
+    "question": "What two model families does ds4-server support?",
+    "ground_truth": "DeepSeek V4 (Flash/PRO) and GLM 5.2.",
+    "expect_answerable": true
+  },
+  {
+    "question": "What quantization scheme does DwarfStar use for MoE experts?",
+    "ground_truth": "Asymmetric 2-bit quantization: routed experts are quantized (up/gate at IQ2_XXS, down at Q2_K) while shared experts, projections, and routing stay at higher precision.",
+    "expect_answerable": true
+  },
+  {
+    "question": "What is the cache key used for DwarfStar's disk-first KV cache?",
+    "ground_truth": "A SHA1 hash of the exact rendered byte-prefix of the prompt.",
+    "expect_answerable": true
+  },
+  {
+    "question": "Does ds4-server support batching of concurrent requests?",
+    "ground_truth": "No — inference is serialized through a single graph worker; it is a single-session engine, not a multi-tenant server.",
+    "expect_answerable": true
+  },
+  {
+    "question": "What two main components does the original RAG model from Lewis et al. (2020) combine?",
+    "ground_truth": "A pre-trained dense retriever (a query encoder plus a document index searched via MIPS) and a pre-trained sequence-to-sequence generator, fine-tuned jointly end-to-end.",
+    "expect_answerable": true
+  },
+  {
+    "question": "What three paradigms does the Gao et al. survey use to describe how RAG has evolved?",
+    "ground_truth": "Naive RAG, Advanced RAG, and Modular RAG.",
+    "expect_answerable": true
+  },
+  {
+    "question": "What does HyDE do differently from standard dense retrieval when embedding a query?",
+    "ground_truth": "HyDE has an LLM generate a hypothetical answer document first, then embeds that hypothetical document for similarity search, instead of embedding the raw query directly — closing the vocabulary gap between short queries and long documents.",
+    "expect_answerable": true
+  },
+  {
+    "question": "What is the capital of Australia?",
+    "ground_truth": null,
+    "expect_answerable": false
+  },
+  {
+    "question": "Who won the 2022 FIFA World Cup?",
+    "ground_truth": null,
+    "expect_answerable": false
+  },
+  {
+    "question": "What is the boiling point of water at sea level in Celsius?",
+    "ground_truth": null,
+    "expect_answerable": false
+  }
+]

@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git commit*)",
+            "command": "staged=$(git diff --cached --name-only); if ! grep -qx 'README.md' <<< \"$staged\"; then echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"README.md is not staged for this commit. Update its Status and decisions sections (recruiter-facing progress summary) and git add it before committing.\"}}'; fi"
+          }
+        ]
+      }
+    ]
+  }
+}
