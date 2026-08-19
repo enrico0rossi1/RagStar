@@ -391,9 +391,10 @@ Question: {query}
 ```
 
 ### Decision
-- **System prompt style:** TBD (recommended: strict grounding to start)
-- **Context ordering:** TBD (recommended: best-first)
-- **Include source attribution in prompt?** TBD (recommended: yes, helps with faithfulness)
+- **System prompt style:** Strict grounding (2026-08-19) — see [src/prompt/prompt.py](../src/prompt/prompt.py)
+- **Context ordering:** Best-first (2026-08-19) — chunks used in the order `retrieve()` returns them (similarity-ranked)
+- **Include source attribution in prompt?** Yes (2026-08-19) — `[Source: filename]` under each chunk, free since the metadata is already there
+- **Context window budget:** No truncation logic — 5 chunks × ~512 tok ≈ 2560 tok, under 10% of qwen2.5:7b's 32k window. Revisit if K or chunk size grows enough to matter.
 
 ---
 
@@ -625,8 +626,8 @@ Runs all Q&A pairs, prints RAGAS scores, saves results to `eval/results_TIMESTAM
 | Vector store | LanceDB | Done |
 | Similarity metric | Cosine, explicit | Done |
 | Top-K | 5 | Done |
-| System prompt style | | TBD |
-| Context ordering | | TBD |
+| System prompt style | Strict grounding | Done |
+| Context ordering | Best-first | Done |
 | Chat model | qwen2.5:7b | Done |
 | Temperature | | TBD |
 | Max response tokens | | TBD |

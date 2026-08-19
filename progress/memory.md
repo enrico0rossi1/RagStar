@@ -29,6 +29,10 @@
 | Vector store | LanceDB | 2026-08-19 | Embedded, no server, per ADR-0001's local-first recommendation. `vector_db/chunks` table, full rebuild on each ingest run (not incremental) |
 | Similarity metric | Cosine, explicit | 2026-08-19 | LanceDB defaults to squared-L2, not cosine. nomic-embed-text vectors are unit-normalized so L2/cosine rank identically today, but set explicitly rather than rely on that silently |
 | Top-K | 5 | 2026-08-19 | naive-rag.md default starting point |
+| System prompt style | Strict grounding | 2026-08-19 | Makes faithfulness measurable in eval; no fallback to prior knowledge allowed |
+| Context ordering | Best-first | 2026-08-19 | Chunks used in similarity-rank order; revisit "lost in the middle" only if eval shows top chunks getting ignored |
+| Source attribution | Yes, `[Source: filename]` per chunk | 2026-08-19 | Free — metadata already carried through the pipeline |
+| Testing framework | pytest | 2026-08-19 | Tests hit the real local stack (Ollama, LanceDB), not mocked — consistent with how self-checks already work. `tests/` mirrors `src/`; run via `python -m pytest` (not bare `pytest`, for sys.path reasons) |
 | Embedding model | nomic-embed-text | 2026-08-18 | Via Ollama /v1/embeddings, same openai client as chat |
 | | | | |
 
@@ -79,4 +83,6 @@ EVAL_FRAMEWORK: TBD
 - 2026-08-19: Restructured `data/` into `data/knowledge/` (the actual corpus — loader's default directory, only this gets indexed) and `data/other/` (anything that should never be ingested — scratch files, notes, etc). Whole `data/` dir added to `.gitignore` (not committed).
 - 2026-08-19: Built `src/chunker/` (`chunker.py` + `__init__.py`) — recursive character split, hand-rolled (no framework). `chunk_document(doc: Document) -> list[Chunk]`, `Chunk = {text, source, chunk_index}`. Self-check chunks the real 7-file corpus: 157 chunks total, all within CHUNK_SIZE bounds. `src/__init__.py` added so `src` is an importable package (needed for chunker's cross-package import of `Document` from `src.loader`).
 - 2026-08-19: Built `src/ingest.py` — wires loader → chunker → embedder → LanceDB together, batches embedding calls (32 chunks/call). Ran end-to-end against the real corpus: 157 chunks stored in `vector_db/chunks`. Verified with a real similarity search ("What is retrieval-augmented generation?") — top hit was the survey paper's own opening definition, confirming retrieval actually works, not just that the code runs.
-- Next step when resuming: `query.py` (Component 5/6/7 — embed query, search, assemble prompt, generate) is the next entry point, then the eval harness (Component 8).
+- 2026-08-19: Built `src/retriever/` (Component 5) — `retrieve(query, k=5) -> list[RetrievedChunk]`, embeds the query and searches LanceDB with explicit cosine metric. Built `src/prompt/` (Component 6) — `assemble_prompt(query, chunks) -> messages`, strict-grounding system prompt, best-first ordering, `[Source: ...]` citations. Both self-checked individually and together (prompt.py's self-check calls the real retriever).
+- 2026-08-19: Added `tests/` (pytest) — `test_loader.py`, `test_chunker.py`, `test_prompt.py` are pure logic (no external deps); `test_embedder.py`, `test_retriever.py` hit the real local Ollama/LanceDB stack instead of mocking. 14 tests, all passing. `pytest` added to `requirements.txt`.
+- Next step when resuming: Component 7 (generation — the actual chat call) and `query.py` to wire retrieval → prompt → generation together, then the eval harness (Component 8).

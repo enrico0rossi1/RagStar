@@ -4,3 +4,4 @@ __pycache__/
 vector_db/
 eval/results_*.json
 data/
+.pytest_cache/
