@@ -2,7 +2,8 @@
 
 **Status:** Not started  
 **Gate:** Complete eval harness and record baseline scores before moving to [advanced-rag.md](./advanced-rag.md)  
-**Progress:** [memory.md](./memory.md)
+**Progress:** [memory.md](./memory.md)  
+**Decision reasoning / dev diary:** [diario_di_bordo.md](./diario_di_bordo.md)
 
 ---
 
@@ -88,9 +89,8 @@ Apply in this order:
 4. **Deduplication** — exact-match dedup before chunking; avoids duplicate chunks in the index
 
 ### Decision
-- **Which formats to support first:** `.txt`, `.pdf`, `.md` (2026-08-18)
-- **PDF library:** `pdfplumber` (2026-08-19) — better multi-column/table layout handling than `pypdf`
-- **Strip markdown syntax or keep it:** TBD (keeping it is fine; embeddings handle it)
+- **Formats:** `.txt`, `.pdf`, `.md` · **PDF library:** `pdfplumber` · **Markdown:** kept as-is (embeddings handle it fine)
+- Reasoning: [diario_di_bordo.md — 2026-08-18](./diario_di_bordo.md#2026-08-18-stack-setup-models-formats-and-swapping-ollama-off-wsl), [2026-08-19](./diario_di_bordo.md#2026-08-19-the-big-one-chunking-through-eval-baseline-recorded)
 
 ---
 
@@ -167,9 +167,9 @@ Embed each sentence; split when cosine similarity between adjacent sentences dro
 **Defer to Advanced RAG** — too expensive to tune at the naive stage.
 
 ### Decision
-- **Chunking strategy:** Recursive character split (2026-08-19) — hand-rolled, no framework. See [src/chunker/chunker.py](../src/chunker/chunker.py). Interface `chunk_document(doc) -> list[Chunk]` kept stable so the implementation can be swapped later without touching the rest of the pipeline.
-- **Chunk size:** 2000 chars ≈ 512 tokens (2026-08-19) — character-based approximation (~4 chars/token), no tokenizer wired up yet
-- **Overlap:** 200 chars ≈ 50 tokens / 10% (2026-08-19)
+- **Strategy:** Recursive character split, hand-rolled — [src/chunker/chunker.py](../src/chunker/chunker.py), interface `chunk_document(doc) -> list[Chunk]`
+- **Chunk size:** 2000 chars ≈ 512 tok (~4 chars/token approximation) · **Overlap:** 200 chars ≈ 50 tok / 10%
+- Reasoning: [diario_di_bordo.md — 2026-08-19](./diario_di_bordo.md#2026-08-19-the-big-one-chunking-through-eval-baseline-recorded)
 
 ---
 
@@ -215,7 +215,8 @@ vector = model.encode("your text")
 **The embedding model used at index time must be the same model used at query time.** Mixing models breaks the vector space — retrieval will return garbage. Pick one and commit.
 
 ### Decision
-- **Embedding model:** `nomic-embed-text` (2026-08-18, via Ollama, same openai client as chat — see [src/embedder/embedder.py](../src/embedder/embedder.py))
+- **Embedding model:** `nomic-embed-text`, via Ollama, same openai client as chat — [src/embedder/embedder.py](../src/embedder/embedder.py)
+- Reasoning: [diario_di_bordo.md — 2026-08-18](./diario_di_bordo.md#2026-08-18-stack-setup-models-formats-and-swapping-ollama-off-wsl)
 
 ---
 
@@ -279,7 +280,8 @@ pip install faiss-cpu
 - No metadata storage — you'd need a separate store for the text and source
 
 ### Decision
-- **Vector store:** LanceDB (2026-08-19) — embedded, no server, per ADR-0001's local-first recommendation. Table `chunks` in `vector_db/`, rebuilt from scratch on every `ingest.py` run (not incremental — fine at this corpus size). See [src/ingest.py](../src/ingest.py).
+- **Vector store:** LanceDB, embedded, no server. Table `chunks` in `vector_db/`, rebuilt from scratch on every `ingest.py` run (not incremental — fine at this corpus size). See [src/ingest.py](../src/ingest.py).
+- Reasoning: [diario_di_bordo.md — 2026-08-19](./diario_di_bordo.md#2026-08-19-the-big-one-chunking-through-eval-baseline-recorded)
 
 ---
 
@@ -314,9 +316,9 @@ Only return chunks above a minimum similarity score. Prevents returning irreleva
 **Tradeoff:** harder to tune than K; different embedding models have different score ranges. Easier to start with fixed K.
 
 ### Decision
-- **Similarity metric:** Cosine, set explicitly (2026-08-19) — `table.search(q).metric("cosine")`. LanceDB's default is squared-L2, not cosine; confirmed `nomic-embed-text` vectors are unit-normalized (norm ≈ 1.0) so L2 and cosine happen to rank identically today (L2² = 2 × cosine_distance), but relying on that silently would break if the embedding model ever changes. Set explicitly so distance values are also directly interpretable (0 = identical, 2 = opposite).
-- **Top-K:** 5 (2026-08-19)
-- **Threshold-based?** TBD (recommended: no, for now)
+- **Similarity metric:** Cosine, set explicitly — `table.search(q).metric("cosine")` (LanceDB defaults to squared-L2)
+- **Top-K:** 5 · **Threshold-based?** No, for now
+- Reasoning: [diario_di_bordo.md — 2026-08-19](./diario_di_bordo.md#2026-08-19-the-big-one-chunking-through-eval-baseline-recorded)
 
 ---
 
@@ -391,10 +393,9 @@ Question: {query}
 ```
 
 ### Decision
-- **System prompt style:** Strict grounding (2026-08-19) — see [src/prompt/prompt.py](../src/prompt/prompt.py)
-- **Context ordering:** Best-first (2026-08-19) — chunks used in the order `retrieve()` returns them (similarity-ranked)
-- **Include source attribution in prompt?** Yes (2026-08-19) — `[Source: filename]` under each chunk, free since the metadata is already there
-- **Context window budget:** No truncation logic — 5 chunks × ~512 tok ≈ 2560 tok, under 10% of qwen2.5:7b's 32k window. Revisit if K or chunk size grows enough to matter.
+- **System prompt:** Strict grounding — [src/prompt/prompt.py](../src/prompt/prompt.py) · **Context ordering:** Best-first (similarity-ranked) · **Source attribution:** Yes, `[Source: filename]` per chunk
+- **Context window budget:** No truncation logic — 5 chunks × ~512 tok ≈ 2560 tok, under 10% of qwen2.5:7b's 32k window
+- Reasoning: [diario_di_bordo.md — 2026-08-19](./diario_di_bordo.md#2026-08-19-the-big-one-chunking-through-eval-baseline-recorded)
 
 ---
 
@@ -447,9 +448,8 @@ answer = response.choices[0].message.content
 ```
 
 ### Decision
-- **Chat model:** `qwen2.5:7b` (2026-08-18, native Windows Ollama)
-- **Temperature:** `0.0` (2026-08-19) — reproducible eval runs. Does NOT guarantee correctness on its own; groundedness comes from retrieval quality + the strict-grounding prompt, this just removes sampling randomness as a separate variable.
-- **Max response tokens:** `512` (2026-08-19)
+- **Chat model:** `qwen2.5:7b` (native Windows Ollama) · **Temperature:** `0.0` · **Max response tokens:** `512`
+- Reasoning: [diario_di_bordo.md — 2026-08-18](./diario_di_bordo.md#2026-08-18-stack-setup-models-formats-and-swapping-ollama-off-wsl), [2026-08-19](./diario_di_bordo.md#2026-08-19-the-big-one-chunking-through-eval-baseline-recorded)
 
 ---
 
@@ -545,8 +545,9 @@ Naive RAG baseline (YYYY-MM-DD):
 These numbers are your Phase 2 target to beat.
 
 ### Decision
-- **Eval framework:** Hand-rolled LLM-as-judge, not RAGAS (2026-08-19) — verified, not assumed: `ragas` 0.4.3 declares `langchain-community` with no version constraint, so it always pulls the latest (0.4.2), which dropped a module ragas still hard-imports. Confirmed as a known, open upstream bug ([vibrantlabsai/ragas#2753](https://github.com/vibrantlabsai/ragas/issues/2753), 3 pending fix PRs). Forking considered and rejected — per ADR-0001's own stance against forking a fast-moving upstream for a fix already in progress there. Replicated the three core metrics (faithfulness, context relevance, answer relevance) directly with our own `generate()`. See [src/eval.py](../src/eval.py). Known limitation: self-judging (same local model grades its own answers) — treat scores as directional, not absolute. Revisit real RAGAS once the upstream fix merges.
-- **Q&A set size:** 23 pairs (2026-08-19) — 20 answerable (hand-written from the real corpus content) + 3 out-of-scope for negative rejection. See [eval/qa_pairs.json](../eval/qa_pairs.json).
+- **Eval framework:** Hand-rolled LLM-as-judge, not RAGAS — replicates the three core metrics (faithfulness, context relevance, answer relevance) via our own `generate()`. See [src/eval.py](../src/eval.py). Known limitation: self-judging (same local model grades its own answers) — treat scores as directional, not absolute.
+- **Q&A set:** 23 pairs — 20 answerable (hand-written from the real corpus) + 3 out-of-scope for negative rejection. See [eval/qa_pairs.json](../eval/qa_pairs.json).
+- Reasoning (incl. the `ragas` 0.4.3 dependency bug that ruled it out): [diario_di_bordo.md — 2026-08-19](./diario_di_bordo.md#2026-08-19-the-big-one-chunking-through-eval-baseline-recorded)
 
 **Baseline results (2026-08-19):**
 

@@ -17,8 +17,11 @@ def test_retrieve_finds_relevant_source():
     assert results[0].source in {"gao2024_rag_survey.pdf", "lewis2020_rag.pdf"}
 
 
-def test_retrieve_results_are_ranked_by_distance():
+def test_retrieve_results_have_no_duplicate_chunks():
+    # Each chunk is indexed under multiple embeddings (itself + its Reverse
+    # HyDE questions), so raw search hits can repeat a chunk; retrieve()
+    # must fuse/dedupe those down to distinct chunks before returning k.
     results = retrieve("What is retrieval-augmented generation?")
 
-    distances = [r.distance for r in results]
-    assert distances == sorted(distances)
+    keys = [(r.source, r.chunk_index) for r in results]
+    assert len(keys) == len(set(keys))

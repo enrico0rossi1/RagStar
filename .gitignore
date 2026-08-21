@@ -3,5 +3,6 @@ __pycache__/
 .env
 vector_db/
 eval/results_*.json
+eval/candidate_k_sweep_*.json
 data/
 .pytest_cache/

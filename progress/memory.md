@@ -1,17 +1,18 @@
 # RagStar — Progress Memory
 
-## Current phase: Phase 1 — Naive RAG COMPLETE. Ready to start Phase 2 (Advanced RAG).
+## Current phase: Phase 2 — Advanced RAG COMPLETE (2 of 3 techniques kept, `CANDIDATE_K` tuned to 30). Ready to start Phase 3 (Modular RAG).
 
 ## Status
 
 - [x] **Phase 0** — Stack setup: chat model (qwen2.5:7b) and embedding model (nomic-embed-text) both running via native Windows Ollama, both verified through code (embedder + generator self-checks).
 - [x] **Phase 1** — Naive RAG: full pipeline done end-to-end (loader → chunker → embedder → LanceDB → retriever → prompt → generator, wired by `ingest.py` + `query.py`). 20/20 tests passing.
 - [x] **Phase 1 eval** — Baseline recorded 2026-08-19: faithfulness 0.85, answer relevance 0.86, context relevance 0.4975 (matches naive-rag.md's own predicted naive-RAG weakness — the target for Advanced RAG to move), rejection accuracy 1.0, avg latency 6.87s, 4.74 tok/s. **Phase 1 gate satisfied — clear to start Phase 2.**
-- [ ] **Phase 1 eval** — Baseline scores recorded (gate before Phase 2)
-- [ ] **Phase 2** — Advanced RAG (pre/post-retrieval)
-- [ ] **Phase 2 eval** — Scores vs. baseline recorded
-- [ ] **Phase 3** — Modular RAG (composable modules)
-- [ ] **Phase 3 eval** — Scores vs. Phase 2 recorded
+- [x] **Phase 2.1** — Indexing-time preprocessing: Reverse HyDE (hypothetical questions per chunk, `src/enrichment/`), retrieval fused with RRF across chunk/question embeddings.
+- [x] **Phase 2.3** — Reranking (post-retrieval): cross-encoder (`BAAI/bge-reranker-base`, `src/reranker/`), 20-candidate pool reranked to top-5. Required recalibrating `RRF_K` (60 → 5, the web-scale default was starving the best single-list match out of the candidate pool in this small single-topic corpus) before the reranker could even see the right chunks. Combined result: faithfulness 0.93, context relevance 0.5875, answer relevance 0.89 — **all three beat the naive baseline for the first time** (0.85/0.4975/0.86). Cost: avg latency 6.87s → 16.21s (CPU cross-encoder over 20 candidates/query) — flagged, not yet addressed.
+- [x] **Phase 2.2** — Query optimization (pre-retrieval): tried query-time HyDE (`src/hyde/`, third RRF list). Measured negative — answer relevance dropped to 0.84 (below the 0.86 naive baseline, and below the 0.89 rerank-only checkpoint), context relevance barely moved, +2.75s latency. Reverted cleanly (code + tests + the `generate()` param it needed); current pipeline has no query-time preprocessing. See [diario_di_bordo.md — 2026-08-20](./diario_di_bordo.md#2026-08-20-first-real-query-and-why-the-distance-numbers-looked-unimpressive) for the full arc.
+- [x] **Phase 2 eval** — Final scores vs. baseline (CANDIDATE_K=30): faithfulness 0.97, context relevance 0.615, answer relevance 0.94, rejection accuracy 1.0, avg latency 20.19s. **Phase 2 gate satisfied — clear to start Phase 3.**
+- [x] Latency tradeoff — swept `CANDIDATE_K` (5→50) against the eval harness. Resolved *not* by reducing latency but by confirming there's no good way to cut it via this knob: quality actually peaks at 30 (above the prior default of 20), so the deliberate choice is to keep the higher latency in exchange for the best measured quality, rather than trade quality away for speed. See [diario_di_bordo.md — 2026-08-21](./diario_di_bordo.md#2026-08-21-the-candidate_k-sweep-more-candidates-isnt-free-but-it-isnt-the-cost-you-think).
+- [ ] **Phase 3** — Modular RAG (composable modules) — next phase
 - [ ] **Phase 7** — DwarfStar integration (hardware TBD)
 
 ---
@@ -39,25 +40,38 @@
 | Eval framework | Hand-rolled LLM-as-judge (not RAGAS) | 2026-08-19 | Verified, not assumed: ragas 0.4.3's METADATA declares `langchain-community` with NO version constraint, so `pip install ragas` always pulls the latest (0.4.2, itself deprecated upstream), which dropped `chat_models.vertexai` — a module ragas still hard-imports at package load. Confirmed as a known, currently-open upstream bug: github.com/vibrantlabsai/ragas issue #2753, three pending fix PRs (#2837/#2923/#2956), none merged. Considered forking to patch it; rejected per ADR-0001's own reasoning against forking fast-moving upstreams for a fix already in progress there. Considered pinning an older langchain-community as a stopgap; rejected in favor of the hand-rolled version (smaller footprint, no exposure to ragas's wider dependency tree — instructor, networkx, datasets, scikit-network). Revisit real RAGAS once the upstream fix ships. Replicated its 3 core metrics directly using our own `generate()` — ~150 lines. See `src/eval.py`. |
 | Eval Q&A set | 23 pairs (20 answerable + 3 out-of-scope) | 2026-08-19 | Hand-written, grounded in the real corpus content (read every file directly rather than guessing) — see `eval/qa_pairs.json` |
 | Embedding model | nomic-embed-text | 2026-08-18 | Via Ollama /v1/embeddings, same openai client as chat |
+| Indexing preprocessing | Reverse HyDE (3 questions/chunk) + RRF-fused retrieval | 2026-08-20 | `src/enrichment/`. First raw-pooled attempt regressed all quality metrics; RRF fusion across separate chunk/question searches fixed context relevance past baseline (0.4975 → 0.57), faithfulness/answer relevance still below baseline — carried forward pending reranking |
+| Reranker | Cross-encoder, BAAI/bge-reranker-base (sentence-transformers) | 2026-08-20 | `src/reranker/`, candidate pool → top-5. Chosen over LLM-based (would've stayed Ollama-only/zero new deps but slower) and MMR (free but diversity-focused, wouldn't fix garbled-chunk noise). Required recalibrating RRF_K (60→5) to fix a candidate-pool starvation bug before the reranker could see the right chunks. Combined result: all 3 quality metrics beat baseline |
+| CANDIDATE_K (reranker pool size) | 30 | 2026-08-21 | Swept 5–50 against the eval harness. Quality peaks at 30 (faithfulness 0.97, context relevance 0.615, answer relevance 0.94 — better than 20 on every metric), plateaus/declines by 40, then a non-linear latency cliff at 45+ (80s+, reads as resource exhaustion on this machine, not a real cost — stayed clear of it). No K below 20 gave a good latency/quality trade, so kept the quality-optimal point rather than trading quality for speed |
 | | | | |
 
 ---
 
 ## Baseline eval scores
 
-*Fill in after Phase 1 eval run (`python eval.py`)*
+| Metric | Naive RAG | + Reverse HyDE (raw pool) | + Reverse HyDE (RRF K=60) | + Reverse HyDE (RRF K=5) + Reranking (CANDIDATE_K=20) | + CANDIDATE_K=30 (**final**) |
+|--------|-----------|---------------------------|------------------------------|-------------|-------------|
+| Context relevance | 0.4975 | 0.4700 | 0.5700 | 0.5875 | **0.6150** |
+| Faithfulness | 0.8500 | 0.7500 | 0.7600 | 0.9300 | **0.9700** |
+| Answer relevance | 0.8600 | 0.7000 | 0.7300 | 0.8900 | **0.9400** |
+| Rejection accuracy (negative rejection) | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 |
+| Avg latency/query (s) | 6.87 | 6.77 | 6.40 | 16.21 | 20.19 |
+| P95 latency/query (s) | 10.72 | — | 8.93 | 17.52 | 21.17 |
+| Generation speed (tok/s)* | 4.74 | 4.21 | 4.87 | 2.06 | 1.73 |
 
-| Metric | Naive RAG | Advanced RAG | Modular RAG |
-|--------|-----------|-------------|-------------|
-| Context relevance | 0.4975 | — | — |
-| Faithfulness | 0.8500 | — | — |
-| Answer relevance | 0.8600 | — | — |
-| Rejection accuracy (negative rejection) | 1.0000 | — | — |
-| Avg latency/query (s) | 6.87 | — | — |
-| P95 latency/query (s) | 10.72 | — | — |
-| Generation speed (tok/s) | 4.74 | — | — |
+\* `tokens_per_sec` in eval.py is completion_tokens ÷ full query() latency (retrieval+rerank+generation), not pure decode speed — its drop here is the reranking overhead, not the LLM getting slower.
 
-Baseline run: 2026-08-19, 23 Q&A pairs (20 answerable + 3 out-of-scope), `eval/results_20260819T160641Z.json`. Context relevance landed almost exactly where naive-rag.md predicted (0.5-0.7 range, "naive RAG's main weakness") — a good sign the harness measures something real. This is the number Advanced RAG's reranking should move.
+Naive baseline: 2026-08-19, `eval/results_20260819T160641Z.json`. Context relevance landed almost exactly where naive-rag.md predicted (0.5-0.7 range, "naive RAG's main weakness") — a good sign the harness measures something real.
+
+Reverse HyDE, first attempt (raw pooled search over chunk + question embeddings): 2026-08-20, `eval/results_20260820T160828Z.json` — regressed every quality metric. Root cause: question-embeddings systematically outrank chunk-embeddings on raw cosine distance regardless of true relevance (shared interrogative form).
+
+Reverse HyDE + RRF fusion, K=60 (chunk-kind and question-kind searched as separate ranked lists, fused by rank not raw distance): 2026-08-20, `eval/results_20260820T180834Z.json` — fixed context relevance past baseline, but faithfulness/answer relevance still below baseline, traced to garbled PDF-bibliography chunks still winning top-K on topical-relevance grounds.
+
+Reverse HyDE + RRF (K recalibrated 60→5) + cross-encoder reranking (`BAAI/bge-reranker-base`): 2026-08-20, `eval/results_20260820T182917Z.json` — **all three quality metrics now beat baseline.** RRF_K=60 was itself starving the best chunk out of the reranker's candidate pool (web-scale constant miscalibrated for a ~157-chunk single-topic corpus); fixing that let the cross-encoder actually see and correctly separate real content from citation noise (0.82 vs 0.23 score). Tradeoff: avg latency more than doubled (6.87s → 16.21s) from CPU-based reranking over 20 candidates/query — flagged per ROADMAP.md §6.3a, not yet addressed. **This is the current state.**
+
+Query-time HyDE, tried on top of the above (third RRF list, hypothetical-answer embedding vs chunk rows): 2026-08-20, `eval/results_20260820T213737Z.json` — answer relevance dropped to 0.84 (below both the naive baseline and the rerank-only checkpoint), context relevance barely moved, +2.75s latency, no compensating gain. Reverted; not part of the current state (`src/hyde/` removed).
+
+CANDIDATE_K sweep (5, 10, 15, 20, 30, 35, 40, 45, 50), each a full eval run: 2026-08-21, `eval/candidate_k_sweep_20260820.json` (gitignored, reproducible via the swept parameter). Quality was *not* monotonic below 20 — every value under 20 lost real quality for modest latency savings (e.g. K=5: 9.11s but faithfulness dropped to 0.74). Quality peaked at K=30 (0.97/0.615/0.94, beating K=20 on every metric), plateaued/declined slightly by 40, then K=45/50 hit a latency cliff (80s, 135s) inconsistent with the clean ~linear scaling seen up to 40 — read as this machine hitting a resource limit (thermal/RAM) under sustained load, not a real cost curve, and excluded from the decision. **Chose K=30 as final** — not a latency reduction, a deliberate acceptance of ~4s more latency (16.21s → 20.19s) in exchange for the best measured quality, since no value below 20 offered a good trade. `src/query.py`'s `CANDIDATE_K` set to 30. **This is the current state.**
 
 ---
 
@@ -66,15 +80,19 @@ Baseline run: 2026-08-19, 23 Q&A pairs (20 answerable + 3 out-of-scope), `eval/r
 *Fill in as you make decisions in naive-rag.md*
 
 ```
-BASE_URL:      http://localhost:11434/v1
-CHAT_MODEL:    qwen2.5:7b
-EMBED_MODEL:   nomic-embed-text
-CHUNK_SIZE:    2000 chars (~512 tok)
-CHUNK_OVERLAP: 200 chars (~50 tok)
-TOP_K:         5
-VECTOR_STORE:  LanceDB (vector_db/chunks)
-TEMPERATURE:   0.0
-MAX_TOKENS:    512
+BASE_URL:       http://localhost:11434/v1
+CHAT_MODEL:     qwen2.5:7b
+EMBED_MODEL:    nomic-embed-text
+CHUNK_SIZE:     2000 chars (~512 tok)
+CHUNK_OVERLAP:  200 chars (~50 tok)
+N_QUESTIONS:    3 (Reverse HyDE hypothetical questions/chunk, src/enrichment/)
+RRF_K:          5 (chunk/question fusion constant, recalibrated from the 60 web-search default)
+RERANKER:       BAAI/bge-reranker-base (cross-encoder, sentence-transformers)
+CANDIDATE_K:    30 (candidates reranked before cutting to TOP_K)
+TOP_K:          5 (final chunks sent to the prompt)
+VECTOR_STORE:   LanceDB (vector_db/chunks)
+TEMPERATURE:    0.0
+MAX_TOKENS:     512
 EVAL_FRAMEWORK: hand-rolled LLM-as-judge (src/eval.py, not RAGAS)
 ```
 

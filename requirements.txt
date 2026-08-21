@@ -3,3 +3,4 @@ python-dotenv
 pdfplumber
 lancedb
 pytest
+sentence-transformers

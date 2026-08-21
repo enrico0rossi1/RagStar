@@ -426,17 +426,17 @@ Fill this in as you make each choice:
 | 0.2 | Chat model | qwen2.5:7b | 2026-08-18 |
 | 0.3 | Embedding model | nomic-embed-text | 2026-08-18 |
 | 1.1 | Document formats | .txt, .pdf, .md | 2026-08-18 |
-| 1.1 | Chunking strategy | — | |
-| 1.1 | Chunk size / overlap | — | |
-| 1.2 | Vector store | — | |
-| 1.3 | Similarity metric / top-K | — | |
-| 1.5 | Eval framework | — | |
-| 2.1 | Metadata fields | — | |
-| 2.1 | Reverse HyDE? | — | |
-| 2.1 | Small2Big? | — | |
-| 2.2 | Query optimization strategy | — | |
-| 2.3 | Reranker | — | |
-| 2.3 | Context compression | — | |
+| 1.1 | Chunking strategy | Recursive character split | 2026-08-19 |
+| 1.1 | Chunk size / overlap | 2000 / 200 chars | 2026-08-19 |
+| 1.2 | Vector store | LanceDB | 2026-08-19 |
+| 1.3 | Similarity metric / top-K | Cosine, explicit / 5 | 2026-08-19 |
+| 1.5 | Eval framework | Hand-rolled LLM-as-judge (not RAGAS) | 2026-08-19 |
+| 2.1 | Metadata fields | None beyond source/chunk_index — nothing downstream filters on metadata | 2026-08-20 |
+| 2.1 | Reverse HyDE? | Yes — 3 questions/chunk, RRF-fused with chunk embeddings | 2026-08-20 |
+| 2.1 | Small2Big? | No — not diagnosed as a problem here | 2026-08-20 |
+| 2.2 | Query optimization strategy | Tried query-time HyDE, measured negative, reverted — no query-time preprocessing kept | 2026-08-20 |
+| 2.3 | Reranker | Cross-encoder, BAAI/bge-reranker-base, CANDIDATE_K=30 | 2026-08-21 |
+| 2.3 | Context compression | No — not needed at this corpus/context-window size | 2026-08-20 |
 | 3.3 | Iterative retrieval? | — | |
 | 3.3 | Recursive retrieval? | — | |
 | 3.3 | Adaptive retrieval pattern | — | |
