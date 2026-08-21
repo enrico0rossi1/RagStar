@@ -16,21 +16,16 @@ Everything runs on a local Ollama backend today, built against the standard Open
 
 **Phase 1 (Naive RAG) and Phase 2 (Advanced RAG): both complete.** Full pipeline works end-to-end, every technique measured against the previous baseline with a real before/after, phase gates satisfied. Next: Phase 3 (Modular RAG).
 
-| Stage | | Status |
-|---|---|---|
-| Document loading (`.txt` / `.md` / `.pdf`) | Component 1 | ✅ |
-| Chunking | Component 2 | ✅ |
-| Embedding | Component 3 | ✅ |
-| Vector store | Component 4 | ✅ |
-| Indexing-time preprocessing (Reverse HyDE) | Phase 2.1 | ✅ 3 hypothetical questions/chunk, `src/enrichment/` |
-| **Indexing pipeline** (`ingest.py`) | | ✅ 157 chunks + 459 questions indexed, verified with a real search |
-| Retrieval (RRF-fused chunk + question search) | Component 5 | ✅ |
-| Reranking (cross-encoder) | Phase 2.3 | ✅ `ms-marco-MiniLM-L-6-v2`, `src/reranker/` |
-| Prompt assembly | Component 6 | ✅ |
-| Generation | Component 7 | ✅ |
-| **Querying pipeline** (`query.py`) | | ✅ verified end-to-end, including correctly refusing off-topic questions instead of guessing |
-| Evaluation harness | Component 8 | ✅ hand-rolled LLM-as-judge (`src/eval.py`) — see baseline below |
-| Tests | | ✅ 22/22 passing (`pytest`) |
+| Stage | Status |
+|---|---|
+| Naive RAG core — loading, chunking, embedding, vector store, prompt assembly, generation | ✅ full detail: [progress/naive-rag.md](./progress/naive-rag.md) |
+| **Indexing-time preprocessing — Reverse HyDE** | ✅ 3 hypothetical questions/chunk generated at index time, `src/enrichment/` |
+| **Indexing pipeline** (`ingest.py`) | ✅ 157 chunks + 459 questions indexed, verified with a real search |
+| **Retrieval — RRF-fused chunk + question search** | ✅ `src/retriever/`, Reciprocal Rank Fusion across two embedding populations |
+| **Reranking — cross-encoder** | ✅ `ms-marco-MiniLM-L-6-v2`, `src/reranker/`, 40-candidate pool → top-5 |
+| **Querying pipeline** (`query.py`) | ✅ verified end-to-end, including correctly refusing off-topic questions instead of guessing |
+| Evaluation harness | ✅ hand-rolled LLM-as-judge (`src/eval.py`) — see baseline below |
+| Tests | ✅ 22/22 passing (`pytest`) |
 
 **Naive RAG baseline** (2026-08-19) **→ Advanced RAG, final** (2026-08-21), 23 real Q&A pairs against the actual corpus:
 
@@ -48,6 +43,20 @@ Everything runs on a local Ollama backend today, built against the standard Open
 Naive RAG's context relevance landed almost exactly where this project's own planning docs predicted the weak point would be (0.5-0.7) — Advanced RAG (Reverse HyDE + RRF fusion + cross-encoder reranking) moved every quality metric past baseline. A first reranker choice (`BAAI/bge-reranker-base`) hit those numbers too but at 20.19s — tripling latency. Rather than accept that, checked the actual hardware (a free GPU, but the wrong PyTorch build; a nearly-full 6GB VRAM budget once Ollama's own model was accounted for) and swapped to a smaller, better-suited cross-encoder (`ms-marco-MiniLM-L-6-v2`) instead of fighting for GPU memory — latency dropped back to nearly Naive RAG's own speed without giving back the quality gain. Full reasoning, including the dead ends: [progress/diario_di_bordo.md](./progress/diario_di_bordo.md).
 
 Full phase checklist and running notes: [progress/memory.md](./progress/memory.md). Full decision reasoning, day by day: [progress/diario_di_bordo.md](./progress/diario_di_bordo.md).
+
+### How Advanced RAG actually works
+
+**The problem:** a bi-encoder (used for retrieval) embeds the query and each chunk *independently*, then compares the two vectors — fast, since chunk vectors are precomputed at index time, but the model never reads the query against the chunk together. A short question and the long declarative prose that answers it are phrased too differently to land close together in that vector space, even when the prose is exactly right.
+
+**Reverse HyDE** attacks this from the indexing side: at ingest time, an LLM writes 2–3 questions each chunk answers, and those get embedded and indexed too (`kind="question"`, alongside the chunk's own `kind="chunk"` row — both always point back to the real chunk text). A real user's question can now match a *generated question* — interrogative-to-interrogative, much tighter — instead of only matching prose. Mixing the two embedding populations into one raw-distance ranking backfired at first (questions systematically outrank prose regardless of relevance, since they share phrasing) — fixed by searching them as separate ranked lists and fusing by **rank position** via Reciprocal Rank Fusion, not raw distance:
+
+```
+score(chunk) = Σ over each list it appears in:  1 / (RRF_K + rank_in_that_list)
+```
+
+**Reranking** attacks it from the other side, after retrieval: a **cross-encoder** concatenates the query and a candidate chunk into *one* input and runs them through the transformer together, so query and chunk tokens attend to each other directly — it can judge relevance instead of just measuring embedding proximity. That's precise but expensive (nothing about it can be precomputed, since the score doesn't exist until both texts are present), so it only runs on the 40 candidates retrieval narrows down to, not the whole index.
+
+Full mechanics, every parameter's reasoning, and the two sweeps behind `CANDIDATE_K=40`: [progress/advanced-rag.md](./progress/advanced-rag.md).
 
 ## Pipeline
 
@@ -71,26 +80,28 @@ QUERYING (online, ✅ done)
 
 Every choice below was deliberate, not default-because-nobody-looked — reasoning behind each is in [progress/naive-rag.md](./progress/naive-rag.md) / [progress/advanced-rag.md](./progress/advanced-rag.md), the dated log in [progress/memory.md](./progress/memory.md), and the full day-by-day narrative in [progress/diario_di_bordo.md](./progress/diario_di_bordo.md).
 
+**Naive RAG (Phase 1) — condensed; full reasoning in [progress/naive-rag.md](./progress/naive-rag.md):**
+
 | Component | Choice | Why |
 |---|---|---|
 | RAG paradigm | Modular RAG (built as Naive → Advanced → Modular) | Each stage becomes a swappable module measured against a real baseline, not guessed |
-| Chat model | `qwen2.5:7b` via native Ollama (Windows) | Fits consumer hardware; model-agnostic pipeline means this can change freely |
-| Embedding model | `nomic-embed-text` | Same OpenAI-compatible client as chat, zero extra infra, 768-dim, normalized output |
-| Document formats | `.txt`, `.md`, `.pdf` (`pdfplumber`) | Covers the real corpus; `pdfplumber` chosen over `pypdf` for better multi-column/table handling |
-| Corpus | DwarfStar (`ds4`) docs + 2 arXiv RAG papers | Real public files, on-theme, topically coherent enough to make retrieval quality meaningful to test |
-| Chunking | Recursive character split, hand-rolled, 2000/200 char (~512/50 tok) | Respects paragraph/sentence structure; no framework dependency; interface (`chunk_document`) kept stable so the implementation can swap later without touching the rest of the pipeline |
-| Vector store | LanceDB, embedded (no server) | Local-first per ADR-0001; full rebuild per `ingest.py` run — simplest way to guarantee no duplicate chunks at this corpus size |
-| Similarity metric | Cosine, set explicitly | LanceDB defaults to squared-L2; set cosine explicitly rather than relying on the coincidence that normalized vectors happen to rank the same either way |
-| Final context size | Top-5 chunks sent to the prompt | Unchanged since Naive RAG — the candidate pool that feeds the reranker (below) is what grew, not this |
-| Data layout | `data/knowledge/` (indexed) vs. `data/other/` (ignored by the loader) | Directory-based separation of what's actually part of the RAG corpus, gitignored entirely |
-| System prompt | Strict grounding (answer only from context, else "I don't know") | Makes faithfulness measurable, and verified in practice — off-topic questions get correctly refused instead of a confident wrong answer |
-| Temperature | `0.0` | Reproducible eval runs. Doesn't guarantee correctness on its own — that's retrieval quality + strict grounding; this just removes sampling randomness as a variable |
-| Testing | pytest, hits the real local stack (not mocked) | Consistent with self-checks used throughout `src/`; 22/22 passing |
-| Eval framework | Hand-rolled LLM-as-judge, not RAGAS | `ragas` 0.4.3 has a broken dependency chain (hard-imports Google Vertex AI support removed from `langchain-community`, itself now deprecated/sunset). Replicated its 3 core metrics directly — ~150 lines, no heavy dependency |
-| Indexing preprocessing | Reverse HyDE — 3 hypothetical questions/chunk, RRF-fused with chunk embeddings | Closes the query/document vocabulary gap from the indexing side; a raw-pooled first attempt regressed every metric until fused by rank (RRF) instead of raw distance |
+| Models | `qwen2.5:7b` chat + `nomic-embed-text` embeddings, both via native Ollama | Fit consumer hardware; model-agnostic pipeline means either can change freely |
+| Corpus & loading | DwarfStar (`ds4`) docs + 2 arXiv papers, `.txt`/`.md`/`.pdf` via `pdfplumber` | Real, on-theme, public files — makes retrieval quality meaningful to test |
+| Chunking | Recursive character split, hand-rolled, 2000/200 char | No framework dependency; `chunk_document` interface kept stable for later swaps |
+| Vector store | LanceDB, embedded, cosine metric set explicitly | Local-first (ADR-0001); explicit metric avoids relying on a normalization coincidence |
+| Generation setup | Strict-grounding system prompt, temperature 0.0, top-5 context | Makes faithfulness measurable; refuses out-of-scope questions instead of guessing |
+| Testing & eval | pytest hitting the real local stack; hand-rolled LLM-as-judge, not RAGAS | `ragas` 0.4.3 has a broken dependency chain (deprecated transitive package) — replicated its 3 core metrics directly, ~150 lines, no heavy dependency |
+
+**Advanced RAG (Phase 2) — the current, actively-tuned part of the system:**
+
+| Component | Choice | Why |
+|---|---|---|
+| Indexing preprocessing | Reverse HyDE — 3 hypothetical questions/chunk, RRF-fused with chunk embeddings | Closes the query/document vocabulary gap from the indexing side; a raw-pooled first attempt regressed every metric until fused by rank (RRF) instead of raw distance. `RRF_K=5`, not the textbook web-search default of 60 — that constant assumes lists of thousands, and in this small single-topic corpus it was starving the single best match out of the pool entirely |
 | Query preprocessing | None — query-time HyDE tried, measured negative (answer relevance below baseline, +latency), reverted | One-variable-at-a-time discipline: keep what's measured better than baseline, drop what isn't, regardless of "it's part of the roadmap" |
-| Reranker | Cross-encoder, `ms-marco-MiniLM-L-6-v2` (`sentence-transformers`) | Chosen over LLM-based (zero new deps but slower) and MMR (free but diversity-, not quality-, focused). Scores `(query, chunk)` pairs jointly — correctly separates real content from garbled PDF-extraction noise that bi-encoder distance couldn't. Swapped from the larger `BAAI/bge-reranker-base` (2026-08-21): that model measured well but cost 20.19s/query, and its ~1.1GB risked contending with Ollama for the ~1.6GB of VRAM actually free on this GPU. MiniLM (~90MB) is ~6x cheaper per candidate and sidesteps the VRAM question entirely |
-| Candidate pool size | `CANDIDATE_K=40` | Swept 5–80 across two reranker models. With MiniLM, quality is identical from 40 through 80 — no reason to go higher; latency at 40 (8.87s) is barely above 30 (8.85s) since MiniLM's extra candidates are nearly free |
+| Reranker | Cross-encoder, `ms-marco-MiniLM-L-6-v2` (`sentence-transformers`) | Chosen over LLM-based (zero new deps but slower per query) and MMR (free but diversity-, not quality-, focused). Scores `(query, chunk)` pairs jointly — separates real content from garbled PDF-extraction noise that bi-encoder distance couldn't (4.97 vs. 3.58 score; raw distance barely told them apart) |
+| Reranker model swap | `BAAI/bge-reranker-base` → `ms-marco-MiniLM-L-6-v2` | The larger model measured well but cost 20.19s/query, and its ~1.1GB of weights risked contending with Ollama for the ~1.6GB of VRAM actually free on this 6GB GPU (torch was CPU-only anyway — never touched the GPU at all). MiniLM (~90MB) is ~6x cheaper per candidate and sidesteps the VRAM question entirely |
+| Candidate pool size | `CANDIDATE_K=40` | Swept 5–80 across both reranker models, twice. With MiniLM, quality is byte-identical from 40 through 80 — no reason to go higher; latency at 40 (8.87s) is barely above 30 (8.85s) since MiniLM's extra candidates are nearly free |
+| Latency, overall | 6.87s → 20.19s → 8.87s | Reranking is inherently the dominant cost (a cross-encoder can't precompute anything, unlike bi-encoder search) — fixed by changing the model doing the work, not by tuning `CANDIDATE_K` alone, which plateaued |
 
 ## Project structure
 
