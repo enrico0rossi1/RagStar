@@ -166,7 +166,7 @@ Fill this in as you make each choice:
 | 2.1 | Reverse HyDE? | Yes — 3 questions/chunk, RRF-fused with chunk embeddings | 2026-08-20 |
 | 2.1 | Small2Big? | No — not diagnosed as a problem here | 2026-08-20 |
 | 2.2 | Query optimization strategy | Tried query-time HyDE, measured negative, reverted — no query-time preprocessing kept | 2026-08-20 |
-| 2.3 | Reranker | Cross-encoder, BAAI/bge-reranker-base, CANDIDATE_K=30 | 2026-08-21 |
+| 2.3 | Reranker | Cross-encoder, ms-marco-MiniLM-L-6-v2, CANDIDATE_K=40 (swapped from BAAI/bge-reranker-base/K=30 same day — VRAM contention risk + latency) | 2026-08-21 |
 | 2.3 | Context compression | No — not needed at this corpus/context-window size | 2026-08-20 |
 | 3.3 | Iterative retrieval? | — | |
 | 3.3 | Recursive retrieval? | — | |

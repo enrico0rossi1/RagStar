@@ -15,14 +15,14 @@ from src.prompt.prompt import assemble_prompt
 from src.reranker.reranker import rerank
 from src.retriever.retriever import TOP_K, RetrievedChunk, retrieve
 
-CANDIDATE_K = 30  # over-fetch this many before reranking down to TOP_K
-# Swept 5/10/15/20/30/35/40/45/50 against the eval harness (2026-08-21): quality
-# peaks at 30 (faithfulness 0.97, context relevance 0.615, answer relevance
-# 0.94 — all better than 20's 0.92/0.575/0.89), then plateaus/declines by 40.
-# Latency scales ~linearly up to 40 (~0.4s/candidate); 45+ hit a non-linear
-# cliff (80s+) that reproduced across two consecutive values and reads as
-# resource exhaustion (thermal/RAM) on this machine, not a real cost curve —
-# stayed well clear of it. See diario_di_bordo.md, 2026-08-21.
+CANDIDATE_K = 40  # over-fetch this many before reranking down to TOP_K
+# Re-swept after switching the reranker to MiniLM (much cheaper per candidate
+# than the earlier BAAI/bge-reranker-base, see src/reranker/reranker.py):
+# quality is byte-identical from K=40 through K=80 (same top-5 chunks win
+# regardless of pool size beyond 40), while latency keeps climbing for no
+# benefit. K=40 matches/beats K=30 on every quality metric at effectively the
+# same latency as 30 (MiniLM's extra candidates are nearly free). See
+# diario_di_bordo.md, 2026-08-21.
 
 
 @dataclass

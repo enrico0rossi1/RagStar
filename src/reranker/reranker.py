@@ -7,10 +7,17 @@ garbled-bibliography-chunk problem noted in diario_di_bordo.md (2026-08-20):
 chunks that only *look* relevant via a generic embedding match should score
 poorly once a model actually reads the query against that chunk's real text.
 
-BAAI/bge-reranker-base, via sentence-transformers' CrossEncoder — the
-reranker ROADMAP.md names for this. Downloaded once, cached locally
-(~sentence-transformers's default cache dir), then runs on CPU; no server,
-consistent with this project's local-first stance.
+cross-encoder/ms-marco-MiniLM-L-6-v2, via sentence-transformers'
+CrossEncoder. Swapped from BAAI/bge-reranker-base (2026-08-21): this GPU
+has only ~1.6GB VRAM free once Ollama's chat model is loaded, and
+bge-reranker-base's ~1.1GB of weights risked contending with it (Ollama
+would silently offload more of its own layers to CPU to make room,
+slowing generation down even as reranking sped up). MiniLM is ~90MB,
+comfortably clear of that risk, and faster per-candidate even on CPU.
+Re-measured against the eval harness before keeping it — see
+diario_di_bordo.md, 2026-08-21. Downloaded once, cached locally
+(sentence-transformers's default cache dir); no server, consistent with
+this project's local-first stance.
 """
 if __package__ in (None, ""):
     # Allows running this file directly (`python src/reranker/reranker.py`)
@@ -23,7 +30,7 @@ if __package__ in (None, ""):
 else:
     from ..retriever.retriever import RetrievedChunk
 
-MODEL_NAME = "BAAI/bge-reranker-base"
+MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 _model = None
 
 

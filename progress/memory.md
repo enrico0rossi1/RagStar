@@ -1,6 +1,6 @@
 # RagStar — Progress Memory
 
-## Current phase: Phase 2 — Advanced RAG COMPLETE (2 of 3 techniques kept, `CANDIDATE_K` tuned to 30). Ready to start Phase 3 (Modular RAG).
+## Current phase: Phase 2 — Advanced RAG COMPLETE (2 of 3 techniques kept, reranker swapped to MiniLM, `CANDIDATE_K` tuned to 40). Ready to start Phase 3 (Modular RAG).
 
 ## Status
 
@@ -10,8 +10,8 @@
 - [x] **Phase 2.1** — Indexing-time preprocessing: Reverse HyDE (hypothetical questions per chunk, `src/enrichment/`), retrieval fused with RRF across chunk/question embeddings.
 - [x] **Phase 2.3** — Reranking (post-retrieval): cross-encoder (`BAAI/bge-reranker-base`, `src/reranker/`), 20-candidate pool reranked to top-5. Required recalibrating `RRF_K` (60 → 5, the web-scale default was starving the best single-list match out of the candidate pool in this small single-topic corpus) before the reranker could even see the right chunks. Combined result: faithfulness 0.93, context relevance 0.5875, answer relevance 0.89 — **all three beat the naive baseline for the first time** (0.85/0.4975/0.86). Cost: avg latency 6.87s → 16.21s (CPU cross-encoder over 20 candidates/query) — flagged, not yet addressed.
 - [x] **Phase 2.2** — Query optimization (pre-retrieval): tried query-time HyDE (`src/hyde/`, third RRF list). Measured negative — answer relevance dropped to 0.84 (below the 0.86 naive baseline, and below the 0.89 rerank-only checkpoint), context relevance barely moved, +2.75s latency. Reverted cleanly (code + tests + the `generate()` param it needed); current pipeline has no query-time preprocessing. See [diario_di_bordo.md — 2026-08-20](./diario_di_bordo.md#2026-08-20-first-real-query-and-why-the-distance-numbers-looked-unimpressive) for the full arc.
-- [x] **Phase 2 eval** — Final scores vs. baseline (CANDIDATE_K=30): faithfulness 0.97, context relevance 0.615, answer relevance 0.94, rejection accuracy 1.0, avg latency 20.19s. **Phase 2 gate satisfied — clear to start Phase 3.**
-- [x] Latency tradeoff — swept `CANDIDATE_K` (5→50) against the eval harness. Resolved *not* by reducing latency but by confirming there's no good way to cut it via this knob: quality actually peaks at 30 (above the prior default of 20), so the deliberate choice is to keep the higher latency in exchange for the best measured quality, rather than trade quality away for speed. See [diario_di_bordo.md — 2026-08-21](./diario_di_bordo.md#2026-08-21-the-candidate_k-sweep-more-candidates-isnt-free-but-it-isnt-the-cost-you-think).
+- [x] **Phase 2 eval** — Scores with `BAAI/bge-reranker-base`, CANDIDATE_K=30: faithfulness 0.97, context relevance 0.615, answer relevance 0.94, rejection accuracy 1.0, avg latency 20.19s. **Phase 2 gate satisfied.**
+- [x] Latency actually fixed (2026-08-21) — root cause was the reranker model, not the candidate count. GPU exists (RTX 4050, 6GB) but PyTorch was CPU-only, and the ~1.6GB free VRAM (Ollama already uses 4.3GB) was too tight to safely add `bge-reranker-base` (~1.1GB) without risking Ollama getting pushed further onto CPU. Swapped to `cross-encoder/ms-marco-MiniLM-L-6-v2` (~90MB) instead — ~6x cheaper per candidate even on CPU, sidesteps the VRAM question entirely. Re-swept `CANDIDATE_K` (30/40/50/60/80) since reranking got so much cheaper: quality plateaus at 40 (identical through 80), so kept 40. **Final: faithfulness 0.94, context relevance 0.7025, answer relevance 0.89, avg latency 8.87s** — beats naive baseline on every quality metric, and latency is back near where Naive RAG started (6.87s) despite running the full pipeline. See [diario_di_bordo.md — 2026-08-21](./diario_di_bordo.md#2026-08-21-the-candidate_k-sweep-more-candidates-isnt-free-but-it-isnt-the-cost-you-think).
 - [ ] **Phase 3** — Modular RAG (composable modules) — next phase
 - [ ] **Phase 7** — DwarfStar integration (hardware TBD)
 
@@ -42,24 +42,28 @@
 | Embedding model | nomic-embed-text | 2026-08-18 | Via Ollama /v1/embeddings, same openai client as chat |
 | Indexing preprocessing | Reverse HyDE (3 questions/chunk) + RRF-fused retrieval | 2026-08-20 | `src/enrichment/`. First raw-pooled attempt regressed all quality metrics; RRF fusion across separate chunk/question searches fixed context relevance past baseline (0.4975 → 0.57), faithfulness/answer relevance still below baseline — carried forward pending reranking |
 | Reranker | Cross-encoder, BAAI/bge-reranker-base (sentence-transformers) | 2026-08-20 | `src/reranker/`, candidate pool → top-5. Chosen over LLM-based (would've stayed Ollama-only/zero new deps but slower) and MMR (free but diversity-focused, wouldn't fix garbled-chunk noise). Required recalibrating RRF_K (60→5) to fix a candidate-pool starvation bug before the reranker could see the right chunks. Combined result: all 3 quality metrics beat baseline |
-| CANDIDATE_K (reranker pool size) | 30 | 2026-08-21 | Swept 5–50 against the eval harness. Quality peaks at 30 (faithfulness 0.97, context relevance 0.615, answer relevance 0.94 — better than 20 on every metric), plateaus/declines by 40, then a non-linear latency cliff at 45+ (80s+, reads as resource exhaustion on this machine, not a real cost — stayed clear of it). No K below 20 gave a good latency/quality trade, so kept the quality-optimal point rather than trading quality for speed |
+| CANDIDATE_K (reranker pool size) | 30 → **40 (superseded, see below)** | 2026-08-21 | First sweep (with BAAI/bge-reranker-base) found quality peaks at 30, better than 20 on every metric; a non-linear latency cliff at 45+ read as this machine's resource limits, not a real cost curve. Superseded same day once the reranker model itself changed (below) |
+| Reranker (revised) | Cross-encoder, cross-encoder/ms-marco-MiniLM-L-6-v2 | 2026-08-21 | Swapped from BAAI/bge-reranker-base — GPU exists (RTX 4050, 6GB) but PyTorch was CPU-only, and the ~1.6GB VRAM free after Ollama's model (4.3GB) was too tight to safely add bge-reranker-base (~1.1GB) without risking Ollama offloading more of itself to CPU. MiniLM (~90MB) sidesteps the VRAM question and is ~6x cheaper per candidate even on CPU. Re-verified the model still separates real content from garbled bibliography chunks correctly (score 4.97 vs 3.58) before trusting it |
+| CANDIDATE_K (revised) | 40 | 2026-08-21 | Re-swept (30/40/50/60/80) with the cheaper MiniLM reranker. Quality is byte-identical from 40 through 80 (same top-5 wins regardless of pool size beyond 40); a rejection-accuracy dip at 50+ turned out to be a measurement artifact (eval.py's substring check missed a correctly-phrased refusal), not a real regression — traced before trusting it. 40 matches/beats 30 on every metric at effectively the same latency (8.87s vs 8.85s) |
 | | | | |
 
 ---
 
 ## Baseline eval scores
 
-| Metric | Naive RAG | + Reverse HyDE (raw pool) | + Reverse HyDE (RRF K=60) | + Reverse HyDE (RRF K=5) + Reranking (CANDIDATE_K=20) | + CANDIDATE_K=30 (**final**) |
-|--------|-----------|---------------------------|------------------------------|-------------|-------------|
-| Context relevance | 0.4975 | 0.4700 | 0.5700 | 0.5875 | **0.6150** |
-| Faithfulness | 0.8500 | 0.7500 | 0.7600 | 0.9300 | **0.9700** |
-| Answer relevance | 0.8600 | 0.7000 | 0.7300 | 0.8900 | **0.9400** |
-| Rejection accuracy (negative rejection) | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 |
-| Avg latency/query (s) | 6.87 | 6.77 | 6.40 | 16.21 | 20.19 |
-| P95 latency/query (s) | 10.72 | — | 8.93 | 17.52 | 21.17 |
-| Generation speed (tok/s)* | 4.74 | 4.21 | 4.87 | 2.06 | 1.73 |
+| Metric | Naive RAG | + Reverse HyDE (raw pool) | + Reverse HyDE (RRF K=60) | + Reranking, BGE (CANDIDATE_K=20) | + CANDIDATE_K=30, BGE | + MiniLM reranker, CANDIDATE_K=40 (**final**) |
+|--------|-----------|---------------------------|------------------------------|-------------|-------------|-------------|
+| Context relevance | 0.4975 | 0.4700 | 0.5700 | 0.5875 | 0.6150 | **0.7025** |
+| Faithfulness | 0.8500 | 0.7500 | 0.7600 | 0.9300 | 0.9700 | 0.9400 |
+| Answer relevance | 0.8600 | 0.7000 | 0.7300 | 0.8900 | 0.9400 | 0.8900 |
+| Rejection accuracy (negative rejection) | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 |
+| Avg latency/query (s) | 6.87 | 6.77 | 6.40 | 16.21 | 20.19 | **8.87** |
+| P95 latency/query (s) | 10.72 | — | 8.93 | 17.52 | 21.17 | ~9.8 |
+| Generation speed (tok/s)* | 4.74 | 4.21 | 4.87 | 2.06 | 1.73 | ~2.9 |
 
-\* `tokens_per_sec` in eval.py is completion_tokens ÷ full query() latency (retrieval+rerank+generation), not pure decode speed — its drop here is the reranking overhead, not the LLM getting slower.
+\* `tokens_per_sec` in eval.py is completion_tokens ÷ full query() latency (retrieval+rerank+generation), not pure decode speed — the drop from Naive RAG is reranking overhead, not the LLM getting slower.
+
+The BGE columns are historical — the reranker itself was swapped to a smaller model on 2026-08-21 (see below), which is now what `src/reranker/reranker.py` actually runs.
 
 Naive baseline: 2026-08-19, `eval/results_20260819T160641Z.json`. Context relevance landed almost exactly where naive-rag.md predicted (0.5-0.7 range, "naive RAG's main weakness") — a good sign the harness measures something real.
 
@@ -71,7 +75,13 @@ Reverse HyDE + RRF (K recalibrated 60→5) + cross-encoder reranking (`BAAI/bge-
 
 Query-time HyDE, tried on top of the above (third RRF list, hypothetical-answer embedding vs chunk rows): 2026-08-20, `eval/results_20260820T213737Z.json` — answer relevance dropped to 0.84 (below both the naive baseline and the rerank-only checkpoint), context relevance barely moved, +2.75s latency, no compensating gain. Reverted; not part of the current state (`src/hyde/` removed).
 
-CANDIDATE_K sweep (5, 10, 15, 20, 30, 35, 40, 45, 50), each a full eval run: 2026-08-21, `eval/candidate_k_sweep_20260820.json` (gitignored, reproducible via the swept parameter). Quality was *not* monotonic below 20 — every value under 20 lost real quality for modest latency savings (e.g. K=5: 9.11s but faithfulness dropped to 0.74). Quality peaked at K=30 (0.97/0.615/0.94, beating K=20 on every metric), plateaued/declined slightly by 40, then K=45/50 hit a latency cliff (80s, 135s) inconsistent with the clean ~linear scaling seen up to 40 — read as this machine hitting a resource limit (thermal/RAM) under sustained load, not a real cost curve, and excluded from the decision. **Chose K=30 as final** — not a latency reduction, a deliberate acceptance of ~4s more latency (16.21s → 20.19s) in exchange for the best measured quality, since no value below 20 offered a good trade. `src/query.py`'s `CANDIDATE_K` set to 30. **This is the current state.**
+CANDIDATE_K sweep with BGE (5, 10, 15, 20, 30, 35, 40, 45, 50), each a full eval run: 2026-08-21, `eval/candidate_k_sweep_20260820.json` (gitignored). Quality was *not* monotonic below 20 — every value under 20 lost real quality for modest latency savings (e.g. K=5: 9.11s but faithfulness dropped to 0.74). Quality peaked at K=30 (0.97/0.615/0.94, beating K=20 on every metric), plateaued/declined slightly by 40, then K=45/50 hit a latency cliff (80s, 135s) inconsistent with the clean ~linear scaling seen up to 40 — read as this machine hitting a resource limit (thermal/RAM) under sustained load, not a real cost curve, excluded from the decision. Chose K=30 with BGE — a deliberate acceptance of more latency (16.21s → 20.19s) for the best measured quality, since no value below 20 offered a good trade.
+
+**Reranker model swap** (2026-08-21): the latency itself got fixed by changing tools, not tuning parameters further. Checked the hardware directly rather than guessing: RTX 4050 (6GB VRAM) present, but `sentence-transformers` had installed CPU-only PyTorch, so the reranker never used the GPU. Checked whether the GPU was even free enough to matter — `ollama ps` showed `qwen2.5:7b` already using 4.3GB/6GB (82%/18% GPU/CPU split), leaving only ~1.6GB free, tight against BGE's ~1.1GB of weights; risked pushing Ollama further onto CPU (slower generation) to make room (net loss, not a win). Swapped to `cross-encoder/ms-marco-MiniLM-L-6-v2` (~90MB) instead of chasing CUDA — reranking 30 candidates dropped from ~11s (BGE, proportional) to 1.85s, ~6x. Full eval with MiniLM at the same K=30: `eval/results_20260821T125737Z.json` — context relevance improved further (0.7175) but faithfulness/answer relevance dropped vs. BGE (0.89/0.84, the latter just below the naive baseline's 0.86). Not a clean win yet.
+
+**Re-swept CANDIDATE_K with MiniLM** (30/40/50/60/80), 2026-08-21, `eval/candidate_k_sweep_minilm_20260821.json` (gitignored) — cheap enough per-candidate now to afford a bigger pool. Quality is byte-identical from K=40 through K=80 (same top-5 wins regardless of pool size beyond 40); latency keeps climbing for nothing past that. A rejection-accuracy dip at K≥50 (1.0→0.6667) turned out to be a measurement artifact — the "failed" case (FIFA World Cup question) was actually correctly refused, just phrased as "the document does not contain..." instead of the exact "don't know" substring `eval.py`'s check looks for. Traced before trusting the number.
+
+**Final state: MiniLM reranker, `CANDIDATE_K=40`.** faithfulness 0.94, context relevance 0.7025, answer relevance 0.89, rejection accuracy 1.0, avg latency 8.87s — beats naive baseline on every quality metric, at latency close to where Naive RAG started (6.87s) despite the full Reverse HyDE + RRF + reranking pipeline. `src/reranker/reranker.py`'s `MODEL_NAME` and `src/query.py`'s `CANDIDATE_K` both updated. **This is the current state.**
 
 ---
 
@@ -87,8 +97,8 @@ CHUNK_SIZE:     2000 chars (~512 tok)
 CHUNK_OVERLAP:  200 chars (~50 tok)
 N_QUESTIONS:    3 (Reverse HyDE hypothetical questions/chunk, src/enrichment/)
 RRF_K:          5 (chunk/question fusion constant, recalibrated from the 60 web-search default)
-RERANKER:       BAAI/bge-reranker-base (cross-encoder, sentence-transformers)
-CANDIDATE_K:    30 (candidates reranked before cutting to TOP_K)
+RERANKER:       cross-encoder/ms-marco-MiniLM-L-6-v2 (cross-encoder, sentence-transformers)
+CANDIDATE_K:    40 (candidates reranked before cutting to TOP_K)
 TOP_K:          5 (final chunks sent to the prompt)
 VECTOR_STORE:   LanceDB (vector_db/chunks)
 TEMPERATURE:    0.0

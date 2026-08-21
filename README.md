@@ -25,7 +25,7 @@ Everything runs on a local Ollama backend today, built against the standard Open
 | Indexing-time preprocessing (Reverse HyDE) | Phase 2.1 | ✅ 3 hypothetical questions/chunk, `src/enrichment/` |
 | **Indexing pipeline** (`ingest.py`) | | ✅ 157 chunks + 459 questions indexed, verified with a real search |
 | Retrieval (RRF-fused chunk + question search) | Component 5 | ✅ |
-| Reranking (cross-encoder) | Phase 2.3 | ✅ `BAAI/bge-reranker-base`, `src/reranker/` |
+| Reranking (cross-encoder) | Phase 2.3 | ✅ `ms-marco-MiniLM-L-6-v2`, `src/reranker/` |
 | Prompt assembly | Component 6 | ✅ |
 | Generation | Component 7 | ✅ |
 | **Querying pipeline** (`query.py`) | | ✅ verified end-to-end, including correctly refusing off-topic questions instead of guessing |
@@ -36,16 +36,16 @@ Everything runs on a local Ollama backend today, built against the standard Open
 
 | Metric | Naive RAG | Advanced RAG |
 |---|---|---|
-| Faithfulness | 0.85 | **0.97** |
-| Answer relevance | 0.86 | **0.94** |
-| Context relevance | 0.4975 | **0.615** |
+| Faithfulness | 0.85 | **0.94** |
+| Answer relevance | 0.86 | **0.89** |
+| Context relevance | 0.4975 | **0.7025** |
 | Rejection accuracy (out-of-scope questions) | 1.0 | 1.0 |
-| Avg latency / query | 6.87s (p95 10.72s) | 20.19s (p95 21.17s) |
-| Generation speed | 4.74 tok/s | 1.73 tok/s* |
+| Avg latency / query | 6.87s (p95 10.72s) | 8.87s (p95 ~9.8s) |
+| Generation speed | 4.74 tok/s | ~2.9 tok/s* |
 
-\* completion tokens ÷ full pipeline latency (retrieval + rerank + generation), not pure LLM decode speed — the drop is reranking overhead, not the model getting slower.
+\* completion tokens ÷ full pipeline latency (retrieval + rerank + generation), not pure LLM decode speed.
 
-Naive RAG's context relevance landed almost exactly where this project's own planning docs predicted the weak point would be (0.5-0.7) — Advanced RAG (Reverse HyDE + RRF fusion + cross-encoder reranking) moved every quality metric past baseline, at a real, deliberately-accepted latency cost (roughly tripled — a `CANDIDATE_K` sweep from 5 to 50 confirmed there's no way to claw that back without trading away quality; see the diary for the full sweep).
+Naive RAG's context relevance landed almost exactly where this project's own planning docs predicted the weak point would be (0.5-0.7) — Advanced RAG (Reverse HyDE + RRF fusion + cross-encoder reranking) moved every quality metric past baseline. A first reranker choice (`BAAI/bge-reranker-base`) hit those numbers too but at 20.19s — tripling latency. Rather than accept that, checked the actual hardware (a free GPU, but the wrong PyTorch build; a nearly-full 6GB VRAM budget once Ollama's own model was accounted for) and swapped to a smaller, better-suited cross-encoder (`ms-marco-MiniLM-L-6-v2`) instead of fighting for GPU memory — latency dropped back to nearly Naive RAG's own speed without giving back the quality gain. Full reasoning, including the dead ends: [progress/diario_di_bordo.md](./progress/diario_di_bordo.md).
 
 Full phase checklist and running notes: [progress/memory.md](./progress/memory.md). Full decision reasoning, day by day: [progress/diario_di_bordo.md](./progress/diario_di_bordo.md).
 
@@ -62,8 +62,8 @@ INDEXING (offline, ✅ done)
 
 
 QUERYING (online, ✅ done)
-  User query ──► Retriever (RRF-fused chunk + question search, 30 candidates)
-             ──► Reranker (cross-encoder, BAAI/bge-reranker-base, → top-5)
+  User query ──► Retriever (RRF-fused chunk + question search, 40 candidates)
+             ──► Reranker (cross-encoder, ms-marco-MiniLM-L-6-v2, → top-5)
              ──► Prompt assembly ──► Generator (qwen2.5:7b) ──► Answer + sources
 ```
 
@@ -89,8 +89,8 @@ Every choice below was deliberate, not default-because-nobody-looked — reasoni
 | Eval framework | Hand-rolled LLM-as-judge, not RAGAS | `ragas` 0.4.3 has a broken dependency chain (hard-imports Google Vertex AI support removed from `langchain-community`, itself now deprecated/sunset). Replicated its 3 core metrics directly — ~150 lines, no heavy dependency |
 | Indexing preprocessing | Reverse HyDE — 3 hypothetical questions/chunk, RRF-fused with chunk embeddings | Closes the query/document vocabulary gap from the indexing side; a raw-pooled first attempt regressed every metric until fused by rank (RRF) instead of raw distance |
 | Query preprocessing | None — query-time HyDE tried, measured negative (answer relevance below baseline, +latency), reverted | One-variable-at-a-time discipline: keep what's measured better than baseline, drop what isn't, regardless of "it's part of the roadmap" |
-| Reranker | Cross-encoder, `BAAI/bge-reranker-base` (`sentence-transformers`) | Chosen over LLM-based (zero new deps but slower) and MMR (free but diversity-, not quality-, focused). Scores `(query, chunk)` pairs jointly — correctly separates real content from garbled PDF-extraction noise that bi-encoder distance couldn't |
-| Candidate pool size | `CANDIDATE_K=30` | Swept 5–50 against the eval harness. Quality peaks at 30 (beats the naive default of 20 on every metric); no smaller K gave a good latency trade, so kept the quality-optimal point |
+| Reranker | Cross-encoder, `ms-marco-MiniLM-L-6-v2` (`sentence-transformers`) | Chosen over LLM-based (zero new deps but slower) and MMR (free but diversity-, not quality-, focused). Scores `(query, chunk)` pairs jointly — correctly separates real content from garbled PDF-extraction noise that bi-encoder distance couldn't. Swapped from the larger `BAAI/bge-reranker-base` (2026-08-21): that model measured well but cost 20.19s/query, and its ~1.1GB risked contending with Ollama for the ~1.6GB of VRAM actually free on this GPU. MiniLM (~90MB) is ~6x cheaper per candidate and sidesteps the VRAM question entirely |
+| Candidate pool size | `CANDIDATE_K=40` | Swept 5–80 across two reranker models. With MiniLM, quality is identical from 40 through 80 — no reason to go higher; latency at 40 (8.87s) is barely above 30 (8.85s) since MiniLM's extra candidates are nearly free |
 
 ## Project structure
 
@@ -137,7 +137,7 @@ cp .env.example .env   # BASE_URL, CHAT_MODEL, EMBED_MODEL
 # Drop your own corpus into data/knowledge/, then:
 .venv/Scripts/python src/ingest.py   # also generates Reverse HyDE questions per chunk — slower than a plain embed pass
 
-# Ask a question (first run downloads the reranker model, ~280MB, then it's cached):
+# Ask a question (first run downloads the reranker model, ~90MB, then it's cached):
 .venv/Scripts/python src/query.py "What is retrieval-augmented generation?"
 
 # Run the test suite:
@@ -149,7 +149,7 @@ cp .env.example .env   # BASE_URL, CHAT_MODEL, EMBED_MODEL
 
 ## What's next
 
-**Phase 2 — Advanced RAG: done.** Naive RAG's baseline exposed a concrete, measured weakness: context relevance of 0.4975 — the retriever pulled back chunks only loosely related to the question about half the time. Reverse HyDE (indexing-time) + RRF fusion + cross-encoder reranking (post-retrieval) fixed it — every quality metric now beats baseline. Query-time preprocessing (HyDE) was tried and measured negative, so it was reverted rather than kept for roadmap completeness. The cost: latency roughly tripled (6.87s → 20.19s), a deliberately accepted tradeoff after a `CANDIDATE_K` sweep confirmed there's no way to claw it back without giving up the quality gain. Full reasoning: [progress/advanced-rag.md](./progress/advanced-rag.md) and [progress/diario_di_bordo.md](./progress/diario_di_bordo.md).
+**Phase 2 — Advanced RAG: done.** Naive RAG's baseline exposed a concrete, measured weakness: context relevance of 0.4975 — the retriever pulled back chunks only loosely related to the question about half the time. Reverse HyDE (indexing-time) + RRF fusion + cross-encoder reranking (post-retrieval) fixed it — every quality metric now beats baseline. Query-time preprocessing (HyDE) was tried and measured negative, so it was reverted rather than kept for roadmap completeness. The first working reranker tripled latency (6.87s → 20.19s); rather than accept that, checked the hardware directly and swapped to a smaller, better-suited cross-encoder, landing at 8.87s — nearly the original speed, with the quality gain intact. Full reasoning: [progress/advanced-rag.md](./progress/advanced-rag.md) and [progress/diario_di_bordo.md](./progress/diario_di_bordo.md).
 
 **Phase 3 — Modular RAG.** Now that Advanced RAG's individual techniques are proven, the pipeline gets restructured into composable, swappable modules (retriever, reranker, router, memory) that can be recombined per use case, rather than a fixed linear chain. This is where multi-source retrieval and adaptive/iterative retrieval patterns come in.
 

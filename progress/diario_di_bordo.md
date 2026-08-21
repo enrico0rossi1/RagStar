@@ -208,3 +208,39 @@ Avg latency            6.87s                   20.19s
 ```
 
 Every quality metric improved substantially over the session; latency roughly tripled. That's the honest, measured tradeoff this project's whole discipline was built to surface rather than paper over — and it's where Phase 2 closes.
+
+---
+
+**Later the same day — actually fixing the latency, not just accepting it.** Came back to the 20.19s problem with a real proposal from the user: cache the "most important" chunks by retrieval frequency, so repeat usage gets faster over time. Worth explaining why that specific mechanism doesn't map onto the actual cost before building it: profiled the warm pipeline (retrieve ~2.2–2.4s, rerank ~7.2–7.4s, generate ~5.2–5.4s) and reranking is dominant. A cross-encoder has to jointly encode the query and chunk *together* — no amount of "this chunk is popular" tells it anything about a brand-new question, so a chunk-frequency cache has nothing to skip. Walked through the bi-encoder/cross-encoder distinction in full since it explains both why reranking helps (query and chunk tokens attend to each other directly) and why it's slow (nothing about that can be precomputed).
+
+Checked the actual hardware next instead of guessing: an RTX 4050 with 6GB VRAM is present, but `sentence-transformers` had pulled the CPU-only PyTorch build, so the reranker never touched the GPU at all. Also checked whether Ollama itself uses the GPU — it does (`ollama ps` showed 82%/18% GPU/CPU split for `qwen2.5:7b`), and it's already using 4.3 of the 6GB, leaving only ~1.6GB free. That matters: `bge-reranker-base`'s ~1.1GB of weights would be tight against that headroom, and if it didn't fit cleanly, Ollama would silently push more of its own layers to CPU to make room — trading a reranking speedup for a generation slowdown, not a net win. Explained this whole chain to the user before touching anything, since "put it on the GPU" sounded simple but the actual risk (two models fighting over one memory pool) wasn't obvious from the outside.
+
+Chose the safer fix first: swap `bge-reranker-base` (278M params, ~1.1GB) for `cross-encoder/ms-marco-MiniLM-L-6-v2` (~22M params, ~90MB) — comfortably clear of the VRAM risk without touching the GPU question at all, and inherently faster per-candidate even on CPU. Self-check still separated the real definition chunk from the garbled bibliography chunk cleanly (scores 4.97 vs 3.58), so the ranking behavior held. Measured: reranking 30 candidates dropped from ~11s (BGE, proportional) to 1.85s — about 6x.
+
+Full eval came back mixed, not a clean win — worth reporting exactly as measured:
+
+```
+                    BGE (K=30)   MiniLM (K=30)
+Faithfulness           0.97         0.89
+Context relevance      0.615        0.7175
+Answer relevance       0.94         0.84
+Avg latency            20.19s       8.85s
+```
+
+Latency more than halved and context relevance actually improved, but faithfulness and answer relevance both dropped — answer relevance (0.84) landed slightly *below* even the naive baseline's 0.86. Not a strict win yet.
+
+Since MiniLM is so much cheaper per candidate (~0.06s vs BGE's ~0.4s), there was real headroom to spend on a bigger pool without approaching BGE's cost — swept 30/40/50/60/80. Quality turned out to be byte-identical from K=40 through K=80 (the same top-5 chunks win the rerank regardless of pool size beyond that point), while latency kept climbing for nothing. One real scare in the middle of that: rejection accuracy dropped to 0.6667 at K≥50. Traced it before trusting the number — the "failed" case was the FIFA World Cup question, and the model's actual answer was *"The document provided does not contain any information about the 2022 FIFA World Cup winner"* — a completely correct refusal, just phrased differently than the exact substring `eval.py`'s rejection check looks for (`"don't know" in answer.lower()`). Not a real regression, a measurement blind spot in the harness. Good reminder not to let a single crude metric override actually reading the answer.
+
+**Landed on `CANDIDATE_K=40` with the MiniLM reranker.** Matches or beats the K=30/MiniLM numbers on every quality metric (faithfulness 0.94, context relevance 0.7025, answer relevance 0.89), at essentially the same latency as K=30 (8.87s vs 8.85s — the extra 10 candidates cost almost nothing with a model this cheap).
+
+**Final numbers, the whole day's arc:**
+
+```
+                    Naive baseline   BGE (K=30)   MiniLM (K=40, final)
+Faithfulness           0.85            0.97           0.94
+Context relevance      0.4975          0.615          0.7025
+Answer relevance       0.86            0.94           0.89
+Avg latency            6.87s           20.19s         8.87s
+```
+
+This is the actual win the whole exercise was looking for: every quality metric still clears the naive baseline, context relevance is the best it's been all session, and latency is back down near where Naive RAG started — despite running the full Reverse HyDE + RRF + reranking pipeline. Swapping the *tool* (a lighter, better-suited model) beat every attempt to tune the existing tool's parameters, which is worth remembering next time a knob-turning session stalls out on diminishing returns.
